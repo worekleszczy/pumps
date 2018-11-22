@@ -32,11 +32,13 @@ class Algorithm(vodkaPercent: Double, vodkaSensor: TankSensor,
       throw new IllegalArgumentException(s"ratio ${vodkaPercent} not allowed")
     }
 
+    println(s"targetVF: ${targetVodkaFill}, targetSF: ${targetSodaFill}")
+
     sodaPump.off
     vodkaPump.off
     drinkValve.open
-    infSodaPump.on
-    infVodkaPump.on
+    infSodaPump.off
+    infVodkaPump.off
     mixer.off
     logSensors()
     logExecutors()
@@ -45,7 +47,7 @@ class Algorithm(vodkaPercent: Double, vodkaSensor: TankSensor,
   def step(offset: FiniteDuration): Unit = {
     logSensors()
     logExecutors()
-
+    println(s"STATE: ${this.state}")
     state match {
       case EMPTYING => {
         if (drinkEmpty()) {
@@ -78,6 +80,8 @@ class Algorithm(vodkaPercent: Double, vodkaSensor: TankSensor,
         if(vodkaSensor.currentLevel >= targetVodkaFill) {
           infVodkaPump.off
           this.state = FILLING_DRINK
+          vodkaPump.on
+          sodaPump.on
         }
       }
       case FILLING_DRINK => {
@@ -100,23 +104,12 @@ class Algorithm(vodkaPercent: Double, vodkaSensor: TankSensor,
           } else {
             mixer.off
             this.state = EMPTYING
+            drinkValve.open
           }
         }
       }
     }
   }
-
-  //method called roughly every 5 seconds to toggle mixer
-  //  private def toggleMixer(): Unit = {
-  //    if(toggleMixerTimer < Duration.Zero) {
-  //      toggleMixerTimer = 5 seconds
-  //      if(mixer.isRunning){
-  //        mixer.off
-  //      } else {
-  //        mixer.on
-  //      }
-  //    }
-  //  }
 
   //algorithm assumes that level in every tank has same volume
   def minLevels(vodkaRatio: Double, maxVodkaLevel: Int, maxSodaLevel: Int, maxDrinkLevel: Int): (Int, Int) = {
@@ -145,6 +138,7 @@ class Algorithm(vodkaPercent: Double, vodkaSensor: TankSensor,
   def logSensors(): Unit = {
     println("Sensors")
     println(s"soda: ${sodaSensor.getLiquidVolume}, vodka: ${vodkaSensor.getLiquidVolume}, drink: ${drinkSensor.getLiquidVolume}")
+    println(s"sodaL: ${sodaSensor.currentLevel}, vodkaL: ${vodkaSensor.currentLevel}, drinkL: ${drinkSensor.currentLevel}")
   }
 
   def logExecutors(): Unit = {
@@ -164,9 +158,11 @@ class Simulation(val timeTick: FiniteDuration) {
   val vodkaTankSensor = TankSensor(10, vodkaTankCapacity)
   val vodka: Tank = Tank(vodkaTankCapacity, vodkaTankSensor)
 
-  val drinkTankCapacity = 1300.0
-  val drinkTankSensor = TankSensor(15, drinkTankCapacity)
+  val drinkTankCapacity = 2000.0
+  val drinkTankSensor = TankSensor(20, drinkTankCapacity)
   val drink: Tank = Tank(drinkTankCapacity, drinkTankSensor)
+
+  val mixer = Mixer()
 
 
   val infTankSensor = new Sensor {
@@ -177,14 +173,29 @@ class Simulation(val timeTick: FiniteDuration) {
     override def sub(value: Double): Unit = {}
   }
 
-  val infSodaToSodaPump = Pump(10.0, infTankSensor, sodaTankSensor)
-  val infVodkaToVodkaPump = Pump(10.0, infTankSensor, vodkaTankSensor)
-  val vodkaToDrink = Pump(10.0, vodkaTankSensor, drinkTankSensor)
-  val sodaToDrink = Pump(10.0, sodaTankSensor, drinkTankSensor)
+  val infSodaToSodaPump = Pump(100.0, infTankSensor, sodaTankSensor)
+  val infVodkaToVodkaPump = Pump(100.0, infTankSensor, vodkaTankSensor)
+  val vodkaToDrink = Pump(100.0, vodkaTankSensor, drinkTankSensor)
+  val sodaToDrink = Pump(100.0, sodaTankSensor, drinkTankSensor)
+  val drinkValve = Valve(100.0, drinkTankSensor )
 
-  def run(): Unit = ???
+  def run(): Unit = {
+    val elems: List[Simulateable] = List(infSodaToSodaPump, infVodkaToVodkaPump, vodkaToDrink, sodaToDrink, drinkValve)
+    val algorithm = new Algorithm(0.2, vodkaTankSensor, sodaTankSensor, drinkTankSensor, sodaToDrink,
+      vodkaToDrink,drinkValve, infSodaToSodaPump, infVodkaToVodkaPump, mixer)
+    algorithm.preStart()
+    Stream
+      .continually(timeTick)
+      .take(1000)
+      .foreach(v => {
+        Thread.sleep(1000)
+        elems.foreach(_.tick(v))
+        algorithm.step(v)
+      })
+  }
 }
 
 object Simulation extends App {
 
+  new Simulation(2000 millis).run()
 }
